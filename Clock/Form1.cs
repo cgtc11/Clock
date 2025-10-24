@@ -20,22 +20,21 @@ namespace ClockApp
 
         private Timer timer;
 
-        // 動作モード
         private enum Mode { Clock, Countdown, Target }
         private Mode currentMode = Mode.Clock;
 
-        // 言語
         private CultureInfo currentCulture = new CultureInfo("ja-JP");
 
         private bool dragging = false;
         private Point dragCursorPoint;
         private Point dragFormPoint;
 
-        // メニュー参照（全てフィールド化）
+        // メニュー参照
         private ToolStripMenuItem languageJaMenuItem;
         private ToolStripMenuItem alwaysOnTopMenuItem;
-        private ToolStripMenuItem transparencyKeyMenuItem;
         private ToolStripMenuItem enableDraggingMenuItem;
+        private ToolStripMenuItem transparencyKeyMenuItem;
+        private ToolStripMenuItem changeTextColorMenuItem;
         private ToolStripMenuItem changeOpacityMenuItem;
         private ToolStripMenuItem changeTitleTextMenuItem;
         private ToolStripMenuItem changeTitleFontSizeMenuItem;
@@ -49,7 +48,6 @@ namespace ClockApp
         private NotifyIcon trayIcon;
         private ContextMenuStrip contextMenu;
 
-        // カウント用
         private int remainingSeconds = 0;
         private DateTime targetTime;
 
@@ -61,26 +59,22 @@ namespace ClockApp
             InitializeTrayIcon();
             InitializeDragEvents();
 
-            // 既定：時計モード
             StartClockMode();
-
-            // タイトル初期表示
             UpdateTitleWithDateAmPm();
 
             CenterLabels();
             this.SizeChanged += new EventHandler(Form1_SizeChanged);
 
-            // メニュー初期状態
-            languageJaMenuItem.Checked = true;   // 日本語既定
+            // 既定チェック
+            languageJaMenuItem.Checked = true;
             alwaysOnTopMenuItem.Checked = true;
-            transparencyKeyMenuItem.Checked = true;
             enableDraggingMenuItem.Checked = true;
+            transparencyKeyMenuItem.Checked = false; // 透過オフ既定
 
-            // メニュー文言を現在言語で整える
             UpdateMenuTexts();
+            ApplyTransparencySetting(); // 既定適用
         }
 
-        // ===== 初期設定 =====
         private void InitializeFormSettings()
         {
             this.FormBorderStyle = FormBorderStyle.None;
@@ -89,7 +83,6 @@ namespace ClockApp
             this.StartPosition = FormStartPosition.CenterScreen;
         }
 
-        // ===== モード切替ユーティリティ =====
         private void ResetTimer()
         {
             if (timer != null)
@@ -100,8 +93,7 @@ namespace ClockApp
                 timer.Tick -= Timer_Tick_Target;
                 timer.Dispose();
             }
-            timer = new Timer();
-            timer.Interval = 1000;
+            timer = new Timer { Interval = 1000 };
         }
 
         private void StartClockMode()
@@ -135,7 +127,6 @@ namespace ClockApp
             Timer_Tick_Target(this, EventArgs.Empty);
         }
 
-        // ===== Tick 各モード =====
         private void Timer_Tick_Clock(object sender, EventArgs e)
         {
             lblTime.Text = DateTime.Now.ToString("HH:mm:ss", currentCulture);
@@ -174,31 +165,31 @@ namespace ClockApp
             CenterLabels();
         }
 
-        // ===== メニュー =====
         private void InitializeContextMenu()
         {
             contextMenu = new ContextMenuStrip();
 
-            languageJaMenuItem = new ToolStripMenuItem("日本語表記");
-            languageJaMenuItem.CheckOnClick = true;
+            // 並び順（指定どおり）
+            languageJaMenuItem = new ToolStripMenuItem("日本語表記") { CheckOnClick = true };
             languageJaMenuItem.CheckedChanged += LanguageJaMenuItem_CheckedChanged;
             contextMenu.Items.Add(languageJaMenuItem);
             contextMenu.Items.Add(new ToolStripSeparator());
 
-            alwaysOnTopMenuItem = new ToolStripMenuItem("常に手前に表示");
-            alwaysOnTopMenuItem.CheckOnClick = true;
+            alwaysOnTopMenuItem = new ToolStripMenuItem("常に手前に表示") { CheckOnClick = true };
             alwaysOnTopMenuItem.CheckedChanged += AlwaysOnTopMenuItem_CheckedChanged;
             contextMenu.Items.Add(alwaysOnTopMenuItem);
 
-            transparencyKeyMenuItem = new ToolStripMenuItem("黒背景を表示");
-            transparencyKeyMenuItem.CheckOnClick = true;
+            enableDraggingMenuItem = new ToolStripMenuItem("ドラッグ移動を有効") { CheckOnClick = true };
+            enableDraggingMenuItem.CheckedChanged += EnableDraggingMenuItem_CheckedChanged;
+            contextMenu.Items.Add(enableDraggingMenuItem);
+
+            transparencyKeyMenuItem = new ToolStripMenuItem("背景を透過（白煙色）") { CheckOnClick = true };
             transparencyKeyMenuItem.CheckedChanged += TransparencyKeyMenuItem_CheckedChanged;
             contextMenu.Items.Add(transparencyKeyMenuItem);
 
-            enableDraggingMenuItem = new ToolStripMenuItem("ドラッグ移動を有効");
-            enableDraggingMenuItem.CheckOnClick = true;
-            enableDraggingMenuItem.CheckedChanged += EnableDraggingMenuItem_CheckedChanged;
-            contextMenu.Items.Add(enableDraggingMenuItem);
+            changeTextColorMenuItem = new ToolStripMenuItem("文字色を変更");
+            changeTextColorMenuItem.Click += ChangeTextColor_Click;
+            contextMenu.Items.Add(changeTextColorMenuItem);
 
             changeOpacityMenuItem = new ToolStripMenuItem("透明度を数値で指定");
             changeOpacityMenuItem.Click += ChangeOpacity_Click;
@@ -240,7 +231,7 @@ namespace ClockApp
             trayIcon = new NotifyIcon
             {
                 Text = "Clock App",
-                Icon = this.Icon,
+                Icon = this.Icon,              // デザイナで設定したアイコンを使用
                 ContextMenuStrip = contextMenu,
                 Visible = true
             };
@@ -253,18 +244,11 @@ namespace ClockApp
 
             this.Resize += (sender, args) =>
             {
-                if (this.WindowState == FormWindowState.Minimized)
-                {
-                    this.Hide();
-                }
+                if (this.WindowState == FormWindowState.Minimized) this.Hide();
             };
         }
 
-        // 表示を時計モードに切替（タイマーはリセット）
-        private void ShowCurrentTime_Click(object sender, EventArgs e)
-        {
-            StartClockMode();
-        }
+        private void ShowCurrentTime_Click(object sender, EventArgs e) => StartClockMode();
 
         private void ChangeTitleText_Click(object sender, EventArgs e)
         {
@@ -277,9 +261,8 @@ namespace ClockApp
                 textInputDialog.Controls.Add(textBox);
 
                 Button btnOk = new Button { Text = "OK", DialogResult = DialogResult.OK, Location = new Point(10, 50) };
-                textInputDialog.Controls.Add(btnOk);
-
                 Button btnCancel = new Button { Text = languageJaMenuItem.Checked ? "キャンセル" : "Cancel", DialogResult = DialogResult.Cancel, Location = new Point(100, 50) };
+                textInputDialog.Controls.Add(btnOk);
                 textInputDialog.Controls.Add(btnCancel);
 
                 if (textInputDialog.ShowDialog() == DialogResult.OK)
@@ -334,9 +317,8 @@ namespace ClockApp
                 timerDialog.Controls.Add(numericUpDown);
 
                 Button btnOk = new Button { Text = "OK", DialogResult = DialogResult.OK, Location = new Point(10, 50) };
-                timerDialog.Controls.Add(btnOk);
-
                 Button btnCancel = new Button { Text = languageJaMenuItem.Checked ? "キャンセル" : "Cancel", DialogResult = DialogResult.Cancel, Location = new Point(100, 50) };
+                timerDialog.Controls.Add(btnOk);
                 timerDialog.Controls.Add(btnCancel);
 
                 if (timerDialog.ShowDialog() == DialogResult.OK)
@@ -363,9 +345,8 @@ namespace ClockApp
                 timePickerDialog.Controls.Add(dateTimePicker);
 
                 Button btnOk = new Button { Text = "OK", DialogResult = DialogResult.OK, Location = new Point(10, 50) };
-                timePickerDialog.Controls.Add(btnOk);
-
                 Button btnCancel = new Button { Text = languageJaMenuItem.Checked ? "キャンセル" : "Cancel", DialogResult = DialogResult.Cancel, Location = new Point(100, 50) };
+                timePickerDialog.Controls.Add(btnOk);
                 timePickerDialog.Controls.Add(btnCancel);
 
                 if (timePickerDialog.ShowDialog() == DialogResult.OK)
@@ -405,9 +386,8 @@ namespace ClockApp
                 };
 
                 Button btnOk = new Button { Text = "OK", DialogResult = DialogResult.OK, Location = new Point(10, 90) };
-                opacityDialog.Controls.Add(btnOk);
-
                 Button btnCancel = new Button { Text = languageJaMenuItem.Checked ? "キャンセル" : "Cancel", DialogResult = DialogResult.Cancel, Location = new Point(100, 90) };
+                opacityDialog.Controls.Add(btnOk);
                 opacityDialog.Controls.Add(btnCancel);
 
                 if (opacityDialog.ShowDialog() == DialogResult.OK)
@@ -417,9 +397,44 @@ namespace ClockApp
             }
         }
 
+        private void ChangeTextColor_Click(object sender, EventArgs e)
+        {
+            using (var dlg = new ColorDialog())
+            {
+                dlg.AllowFullOpen = true;
+                dlg.FullOpen = true;
+                dlg.Color = lblTime.ForeColor;
+
+                if (dlg.ShowDialog() == DialogResult.OK)
+                {
+                    if (this.TransparencyKey != Color.Empty &&
+                        dlg.Color.ToArgb() == this.TransparencyKey.ToArgb())
+                    {
+                        dlg.Color = ControlPaint.Dark(dlg.Color);
+                    }
+                    lblTitle.ForeColor = dlg.Color;
+                    lblTime.ForeColor = dlg.Color;
+                }
+            }
+        }
+
         private void TransparencyKeyMenuItem_CheckedChanged(object sender, EventArgs e)
         {
-            this.TransparencyKey = transparencyKeyMenuItem.Checked ? Color.WhiteSmoke : Color.Black;
+            ApplyTransparencySetting();
+        }
+
+        private void ApplyTransparencySetting()
+        {
+            if (transparencyKeyMenuItem.Checked)
+            {
+                this.BackColor = Color.WhiteSmoke;
+                this.TransparencyKey = Color.WhiteSmoke;
+            }
+            else
+            {
+                this.TransparencyKey = Color.Empty;
+                this.BackColor = Color.Black;
+            }
         }
 
         private void AlwaysOnTopMenuItem_CheckedChanged(object sender, EventArgs e)
@@ -448,7 +463,6 @@ namespace ClockApp
             Application.Exit();
         }
 
-        // ===== 言語切替 =====
         private void LanguageJaMenuItem_CheckedChanged(object sender, EventArgs e)
         {
             currentCulture = languageJaMenuItem.Checked ? new CultureInfo("ja-JP") : new CultureInfo("en-US");
@@ -463,14 +477,12 @@ namespace ClockApp
         {
             bool ja = languageJaMenuItem.Checked;
 
-            // 自身の項目名も切替
             languageJaMenuItem.Text = ja ? "日本語表記" : "Japanese labels";
-
-            // 右クリックとトレイのメニュー表示文言
-            alwaysOnTopMenuItem.Text = ja ? "常に手前に表示" : "Always on top";
-            transparencyKeyMenuItem.Text = ja ? "黒背景を表示" : "Show black background";
-            enableDraggingMenuItem.Text = ja ? "ドラッグ移動を有効" : "Enable drag move";
-            changeOpacityMenuItem.Text = ja ? "透明度を数値で指定" : "Set opacity";
+            alwaysOnTopMenuItem.Text = ja ? "常に手前へ表示" : "Always on top";
+            enableDraggingMenuItem.Text = ja ? "ドラッグ移動有効" : "Enable drag move";
+            transparencyKeyMenuItem.Text = ja ? "背景透過" : "Transparent BG";
+            changeTextColorMenuItem.Text = ja ? "文字色変更" : "Change text color";
+            changeOpacityMenuItem.Text = ja ? "透明度を数値指定" : "Set opacity";
             changeTitleTextMenuItem.Text = ja ? "タイトル文を変更" : "Change title text";
             changeTitleFontSizeMenuItem.Text = ja ? "タイトルの大きさフォントを変更" : "Change title font";
             changeTimeFontSizeMenuItem.Text = ja ? "時計の大きさフォントを変更" : "Change time font";
@@ -479,7 +491,6 @@ namespace ClockApp
             setTimerTargetTimeMenuItem.Text = ja ? "タイマーを設定（時間を指定して逆算）" : "Set timer (target time)";
             exitAppMenuItem.Text = ja ? "アプリの終了" : "Exit";
 
-            // フォームタイトルとトレイのツールチップ
             this.Text = ja ? "時計" : "Clock";
             trayIcon.Text = ja ? "時計" : "Clock App";
         }
@@ -487,12 +498,11 @@ namespace ClockApp
         private void UpdateTitleWithDateAmPm()
         {
             string date = DateTime.Now.ToString("MM/dd", currentCulture);
-            string amPm = DateTime.Now.ToString("tt", currentCulture); // ja: 午前/午後, en: AM/PM
+            string amPm = DateTime.Now.ToString("tt", currentCulture);
             lblTitle.Text = $"{date}/{amPm}";
             CenterLabels();
         }
 
-        // ===== ドラッグ =====
         private void InitializeDragEvents()
         {
             this.lblTime.MouseDown += new MouseEventHandler(this.lblTime_MouseDown);
@@ -527,7 +537,6 @@ namespace ClockApp
             dragging = false;
         }
 
-        // ===== レイアウト =====
         private void CenterLabels()
         {
             lblTitle.Left = (this.ClientSize.Width - lblTitle.Width) / 2;
@@ -550,5 +559,10 @@ namespace ClockApp
         }
 
         private void Form1_Load(object sender, EventArgs e) { }
+
+        private void Form1_Load_1(object sender, EventArgs e)
+        {
+
+        }
     }
 }

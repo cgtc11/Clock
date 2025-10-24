@@ -5,9 +5,6 @@ namespace ClockApp
 {
     static class Program
     {
-        /// <summary>
-        /// アプリケーションのメインエントリポイントです。
-        /// </summary>
         [STAThread]
         static void Main()
         {
