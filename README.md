@@ -4,5 +4,8 @@ Download [Clock.zip](https://github.com/user-attachments/files/23166362/Clock.zi
 </br>
 <img width="413" height="292" alt="D" src="https://github.com/user-attachments/assets/5c6cec00-ad54-4854-bf04-f70f24df6c6f" /></br>
 </br>
-Windows10以降時計が扱いにくいので、秒数表示できるアプリを作成</br>
+Windows10以降時計が扱いにくいので、秒数表示できる時計アプリを作成</br>
 授業中に起動して使用しています</br>
+無駄にカウントダウン機能付き</br>
+フォントはOS依存だけど、大きさは画面いっぱいとかも可</br>
+</br>
