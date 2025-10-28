@@ -18,6 +18,11 @@ namespace ClockApp
         private const int WS_EX_TRANSPARENT = 0x20;
         private const int WS_EX_LAYERED = 0x80000;
 
+        // リサイズ判定用
+        private const int WM_NCHITTEST = 0x0084;
+        private const int HTBOTTOMRIGHT = 17;
+        private const int GripSize = 18;   // 右下の有効領域ピクセル
+
         private Timer timer;
 
         private enum Mode { Clock, Countdown, Target }
@@ -51,6 +56,12 @@ namespace ClockApp
         private int remainingSeconds = 0;
         private DateTime targetTime;
 
+        // リサイズとフォント拡縮用の基準値
+        private bool isUserResizing = false;
+        private Size baseClientSize;
+        private float baseTitleFontSize;
+        private float baseTimeFontSize;
+
         public Form1()
         {
             InitializeComponent();
@@ -58,6 +69,15 @@ namespace ClockApp
             InitializeContextMenu();
             InitializeTrayIcon();
             InitializeDragEvents();
+
+            // 基準値を記録（デザイナ初期サイズとフォント）
+            baseClientSize = this.ClientSize;
+            baseTitleFontSize = lblTitle.Font.Size;
+            baseTimeFontSize = lblTime.Font.Size;
+
+            // 右下ドラッグでのリサイズ監視
+            this.ResizeBegin += (s, e) => { isUserResizing = true; };
+            this.ResizeEnd += (s, e) => { isUserResizing = false; UpdateFontsBySize(); CenterLabels(); };
 
             StartClockMode();
             UpdateTitleWithDateAmPm();
@@ -81,6 +101,7 @@ namespace ClockApp
             this.BackColor = Color.Black;
             this.Opacity = 0.75;
             this.StartPosition = FormStartPosition.CenterScreen;
+            this.ResizeRedraw = true; // リサイズ時の再描画
         }
 
         private void ResetTimer()
@@ -231,7 +252,7 @@ namespace ClockApp
             trayIcon = new NotifyIcon
             {
                 Text = "Clock App",
-                Icon = this.Icon,              // デザイナで設定したアイコンを使用
+                Icon = this.Icon,              // デザイナ設定のアイコン
                 ContextMenuStrip = contextMenu,
                 Visible = true
             };
@@ -537,13 +558,48 @@ namespace ClockApp
             dragging = false;
         }
 
+        // 右下ドラッグでのリサイズ判定
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == WM_NCHITTEST)
+            {
+                // クライアント座標に変換
+                Point p = PointToClient(Cursor.Position);
+                if (p.X >= this.ClientSize.Width - GripSize &&
+                    p.Y >= this.ClientSize.Height - GripSize)
+                {
+                    m.Result = (IntPtr)HTBOTTOMRIGHT;
+                    return;
+                }
+            }
+            base.WndProc(ref m);
+        }
+
+        // フォントをウィンドウ高さに比例させる
+        private void UpdateFontsBySize()
+        {
+            if (baseClientSize.Height <= 0) return;
+            float scale = (float)this.ClientSize.Height / baseClientSize.Height;
+
+            float newTitle = Math.Max(8f, baseTitleFontSize * scale);
+            float newTime = Math.Max(8f, baseTimeFontSize * scale);
+
+            lblTitle.Font = new Font(lblTitle.Font.FontFamily, newTitle, lblTitle.Font.Style, GraphicsUnit.Point);
+            lblTime.Font = new Font(lblTime.Font.FontFamily, newTime, lblTime.Font.Style, GraphicsUnit.Point);
+        }
+
         private void CenterLabels()
         {
             lblTitle.Left = (this.ClientSize.Width - lblTitle.Width) / 2;
             lblTime.Left = (this.ClientSize.Width - lblTime.Width) / 2;
             lblTitle.Top = (this.ClientSize.Height - lblTitle.Height - lblTime.Height) / 2;
             lblTime.Top = lblTitle.Top + lblTitle.Height;
-            AdjustFormSize();
+
+            // 自動サイズはユーザリサイズ中は抑止
+            if (!isUserResizing)
+            {
+                AdjustFormSize();
+            }
         }
 
         private void AdjustFormSize()
@@ -555,14 +611,11 @@ namespace ClockApp
 
         private void Form1_SizeChanged(object sender, EventArgs e)
         {
+            if (isUserResizing) UpdateFontsBySize();
             CenterLabels();
         }
 
         private void Form1_Load(object sender, EventArgs e) { }
-
-        private void Form1_Load_1(object sender, EventArgs e)
-        {
-
-        }
+        private void Form1_Load_1(object sender, EventArgs e) { }
     }
 }
