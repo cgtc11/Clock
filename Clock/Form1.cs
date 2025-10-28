@@ -8,7 +8,7 @@ namespace ClockApp
 {
     public partial class Form1 : Form
     {
-        // Windows API
+        // ===== Win32 =====
         [DllImport("user32.dll", SetLastError = true)]
         static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
         [DllImport("user32.dll", SetLastError = true)]
@@ -18,10 +18,10 @@ namespace ClockApp
         private const int WS_EX_TRANSPARENT = 0x20;
         private const int WS_EX_LAYERED = 0x80000;
 
-        // リサイズ判定用
-        private const int WM_NCHITTEST = 0x0084;
+        // 枠なし右下リサイズ用
+        private const int WM_NCHITTEST = 0x84;
         private const int HTBOTTOMRIGHT = 17;
-        private const int GripSize = 18;   // 右下の有効領域ピクセル
+        private const int RESIZE_GRIP = 16;
 
         private Timer timer;
 
@@ -47,6 +47,7 @@ namespace ClockApp
         private ToolStripMenuItem showCurrentTimeMenuItem;
         private ToolStripMenuItem setTimerDurationMenuItem;
         private ToolStripMenuItem setTimerTargetTimeMenuItem;
+        private ToolStripMenuItem resetToInitialMenuItem;
         private ToolStripMenuItem exitAppMenuItem;
 
         private bool draggingEnabled = true;
@@ -56,11 +57,30 @@ namespace ClockApp
         private int remainingSeconds = 0;
         private DateTime targetTime;
 
-        // リサイズとフォント拡縮用の基準値
-        private bool isUserResizing = false;
+        // 自動タイトルかどうか
+        private bool isAutoTitle = true;
+        private string lastAutoTitle = "";
+
+        // リサイズ基準
         private Size baseClientSize;
         private float baseTitleFontSize;
         private float baseTimeFontSize;
+
+        // 初期値
+        private Size initialClientSize;
+        private float initialTitleFontSize;
+        private float initialTimeFontSize;
+        private Font initialTitleFont;
+        private Font initialTimeFont;
+        private Color initialTextColor;
+        private double initialOpacity;
+        private bool initialTopMost;
+        private bool initialDraggingEnabled;
+        private bool initialTransparency;
+        private CultureInfo initialCulture;
+
+        // リセット中フラグ
+        private bool _isResetting = false;
 
         public Form1()
         {
@@ -70,40 +90,57 @@ namespace ClockApp
             InitializeTrayIcon();
             InitializeDragEvents();
 
-            // 基準値を記録（デザイナ初期サイズとフォント）
+            // 起動時は時計モード
+            StartClockMode();
+            UpdateTitleWithDateAmPm();
+
+            // いったん中央寄せして内容に合わせてウインドウを広げる
+            CenterLabels();
+            AutoSizeToContent();
+
+            // この時点のレイアウトを基準にする
             baseClientSize = this.ClientSize;
             baseTitleFontSize = lblTitle.Font.Size;
             baseTimeFontSize = lblTime.Font.Size;
 
-            // 右下ドラッグでのリサイズ監視
-            this.ResizeBegin += (s, e) => { isUserResizing = true; };
-            this.ResizeEnd += (s, e) => { isUserResizing = false; UpdateFontsBySize(); CenterLabels(); };
+            // 初期値を保存（フォント含む）
+            initialClientSize = this.ClientSize;
+            initialTitleFontSize = lblTitle.Font.Size;
+            initialTimeFontSize = lblTime.Font.Size;
+            initialTitleFont = (Font)lblTitle.Font.Clone();
+            initialTimeFont = (Font)lblTime.Font.Clone();
+            initialTextColor = Color.White;
+            initialOpacity = 0.75;
+            initialTopMost = true;
+            initialDraggingEnabled = true;
+            initialTransparency = false;
+            initialCulture = new CultureInfo("ja-JP");
 
-            StartClockMode();
-            UpdateTitleWithDateAmPm();
-
-            CenterLabels();
             this.SizeChanged += new EventHandler(Form1_SizeChanged);
 
-            // 既定チェック
+            // メニュー初期値
+            _isResetting = true;
             languageJaMenuItem.Checked = true;
             alwaysOnTopMenuItem.Checked = true;
             enableDraggingMenuItem.Checked = true;
-            transparencyKeyMenuItem.Checked = false; // 透過オフ既定
+            transparencyKeyMenuItem.Checked = false;
+            _isResetting = false;
 
             UpdateMenuTexts();
-            ApplyTransparencySetting(); // 既定適用
+            ApplyTransparencySetting();
+            ApplyDraggingWindowStyle(); // 起動時にも反映
         }
 
+        // ===== 初期フォーム設定 =====
         private void InitializeFormSettings()
         {
             this.FormBorderStyle = FormBorderStyle.None;
             this.BackColor = Color.Black;
             this.Opacity = 0.75;
             this.StartPosition = FormStartPosition.CenterScreen;
-            this.ResizeRedraw = true; // リサイズ時の再描画
         }
 
+        // ===== タイマー共通 =====
         private void ResetTimer()
         {
             if (timer != null)
@@ -124,7 +161,7 @@ namespace ClockApp
             timer.Tick += Timer_Tick_Clock;
             timer.Start();
             lblTime.Text = DateTime.Now.ToString("HH:mm:ss", currentCulture);
-            UpdateTitleWithDateAmPm();
+            if (isAutoTitle) UpdateTitleWithDateAmPm();
             CenterLabels();
         }
 
@@ -148,9 +185,21 @@ namespace ClockApp
             Timer_Tick_Target(this, EventArgs.Empty);
         }
 
+        // ===== Tick =====
         private void Timer_Tick_Clock(object sender, EventArgs e)
         {
             lblTime.Text = DateTime.Now.ToString("HH:mm:ss", currentCulture);
+
+            if (isAutoTitle)
+            {
+                string nowAuto = BuildAutoTitle();
+                if (nowAuto != lastAutoTitle)
+                {
+                    UpdateTitleWithDateAmPm();
+                    CenterLabels();
+                }
+            }
+
             CenterLabels();
         }
 
@@ -186,11 +235,11 @@ namespace ClockApp
             CenterLabels();
         }
 
+        // ===== メニュー生成 =====
         private void InitializeContextMenu()
         {
             contextMenu = new ContextMenuStrip();
 
-            // 並び順（指定どおり）
             languageJaMenuItem = new ToolStripMenuItem("日本語表記") { CheckOnClick = true };
             languageJaMenuItem.CheckedChanged += LanguageJaMenuItem_CheckedChanged;
             contextMenu.Items.Add(languageJaMenuItem);
@@ -240,6 +289,10 @@ namespace ClockApp
             setTimerTargetTimeMenuItem.Click += SetTimerTargetTime_Click;
             contextMenu.Items.Add(setTimerTargetTimeMenuItem);
 
+            resetToInitialMenuItem = new ToolStripMenuItem("初期設定に戻す");
+            resetToInitialMenuItem.Click += ResetToInitialMenuItem_Click;
+            contextMenu.Items.Add(resetToInitialMenuItem);
+
             exitAppMenuItem = new ToolStripMenuItem("アプリの終了");
             exitAppMenuItem.Click += ExitApp_Click;
             contextMenu.Items.Add(exitAppMenuItem);
@@ -247,12 +300,13 @@ namespace ClockApp
             this.ContextMenuStrip = contextMenu;
         }
 
+        // ===== トレイ =====
         private void InitializeTrayIcon()
         {
             trayIcon = new NotifyIcon
             {
                 Text = "Clock App",
-                Icon = this.Icon,              // デザイナ設定のアイコン
+                Icon = this.Icon,
                 ContextMenuStrip = contextMenu,
                 Visible = true
             };
@@ -269,6 +323,7 @@ namespace ClockApp
             };
         }
 
+        // ===== メニュー動作 =====
         private void ShowCurrentTime_Click(object sender, EventArgs e) => StartClockMode();
 
         private void ChangeTitleText_Click(object sender, EventArgs e)
@@ -288,8 +343,19 @@ namespace ClockApp
 
                 if (textInputDialog.ShowDialog() == DialogResult.OK)
                 {
-                    lblTitle.Text = textBox.Text;
+                    string newText = textBox.Text;
+                    lblTitle.Text = newText;
                     CenterLabels();
+
+                    if (newText == lastAutoTitle)
+                        isAutoTitle = true;
+                    else
+                        isAutoTitle = false;
+
+                    // ユーザー操作なのでここを新たな基準に
+                    baseClientSize = this.ClientSize;
+                    baseTitleFontSize = lblTitle.Font.Size;
+                    baseTimeFontSize = lblTime.Font.Size;
                 }
             }
         }
@@ -303,6 +369,11 @@ namespace ClockApp
                 {
                     lblTitle.Font = fontDialog.Font;
                     CenterLabels();
+                    AutoSizeToContent();
+
+                    baseClientSize = this.ClientSize;
+                    baseTitleFontSize = lblTitle.Font.Size;
+                    baseTimeFontSize = lblTime.Font.Size;
                 }
             }
         }
@@ -316,7 +387,11 @@ namespace ClockApp
                 {
                     lblTime.Font = fontDialog.Font;
                     CenterLabels();
-                    AdjustFormSize();
+                    AutoSizeToContent();
+
+                    baseClientSize = this.ClientSize;
+                    baseTitleFontSize = lblTitle.Font.Size;
+                    baseTimeFontSize = lblTime.Font.Size;
                 }
             }
         }
@@ -382,10 +457,19 @@ namespace ClockApp
 
         private void ChangeOpacity_Click(object sender, EventArgs e)
         {
+            bool wasTopMost = this.TopMost;
+            this.TopMost = false;
+
             using (Form opacityDialog = new Form())
             {
                 opacityDialog.Text = languageJaMenuItem.Checked ? "透過設定" : "Opacity";
                 opacityDialog.Size = new Size(300, 160);
+                opacityDialog.FormBorderStyle = FormBorderStyle.FixedDialog;
+                opacityDialog.StartPosition = FormStartPosition.CenterParent;
+                opacityDialog.MinimizeBox = false;
+                opacityDialog.MaximizeBox = false;
+                opacityDialog.ShowInTaskbar = false;
+                opacityDialog.TopMost = true;
 
                 TrackBar trackBar = new TrackBar
                 {
@@ -398,24 +482,38 @@ namespace ClockApp
                 };
                 opacityDialog.Controls.Add(trackBar);
 
-                Label label = new Label { Text = languageJaMenuItem.Checked ? $"不透明度: {trackBar.Value}%" : $"Opacity: {trackBar.Value}%", Location = new Point(10, 60) };
-                opacityDialog.Controls.Add(label);
-
-                trackBar.Scroll += (s, args) =>
+                Label label = new Label
                 {
-                    label.Text = languageJaMenuItem.Checked ? $"不透明度: {trackBar.Value}%" : $"Opacity: {trackBar.Value}%";
+                    Text = languageJaMenuItem.Checked ? $"不透明度: {trackBar.Value}%" : $"Opacity: {trackBar.Value}%",
+                    Location = new Point(10, 60),
+                    AutoSize = true
                 };
+                opacityDialog.Controls.Add(label);
 
                 Button btnOk = new Button { Text = "OK", DialogResult = DialogResult.OK, Location = new Point(10, 90) };
                 Button btnCancel = new Button { Text = languageJaMenuItem.Checked ? "キャンセル" : "Cancel", DialogResult = DialogResult.Cancel, Location = new Point(100, 90) };
                 opacityDialog.Controls.Add(btnOk);
                 opacityDialog.Controls.Add(btnCancel);
 
-                if (opacityDialog.ShowDialog() == DialogResult.OK)
+                double original = this.Opacity;
+
+                EventHandler apply = (s2, a2) =>
                 {
-                    this.Opacity = trackBar.Value / 100.0;
+                    this.Opacity = Math.Max(0.0, Math.Min(1.0, trackBar.Value / 100.0));
+                    label.Text = languageJaMenuItem.Checked ? $"不透明度: {trackBar.Value}%" : $"Opacity: {trackBar.Value}%";
+                };
+                trackBar.Scroll += apply;
+                trackBar.ValueChanged += apply;
+
+                var result = opacityDialog.ShowDialog(this);
+
+                if (result != DialogResult.OK)
+                {
+                    this.Opacity = original;
                 }
             }
+
+            this.TopMost = wasTopMost;
         }
 
         private void ChangeTextColor_Click(object sender, EventArgs e)
@@ -439,8 +537,58 @@ namespace ClockApp
             }
         }
 
+        private void ResetToInitialMenuItem_Click(object sender, EventArgs e)
+        {
+            _isResetting = true;
+
+            // モード
+            StartClockMode();
+
+            // 言語
+            currentCulture = new CultureInfo("ja-JP");
+            languageJaMenuItem.Checked = true;
+
+            // 表示
+            this.TopMost = initialTopMost;
+            alwaysOnTopMenuItem.Checked = initialTopMost;
+
+            draggingEnabled = initialDraggingEnabled;
+            enableDraggingMenuItem.Checked = initialDraggingEnabled;
+            ApplyDraggingWindowStyle();
+
+            transparencyKeyMenuItem.Checked = initialTransparency;
+            ApplyTransparencySetting();
+
+            // 色
+            lblTitle.ForeColor = initialTextColor;
+            lblTime.ForeColor = initialTextColor;
+
+            // 不透明度
+            this.Opacity = initialOpacity;
+
+            // 自動タイトルON
+            isAutoTitle = true;
+            UpdateTitleWithDateAmPm();
+
+            // サイズとフォント（種類も）
+            this.ClientSize = initialClientSize;
+            lblTitle.Font = (Font)initialTitleFont.Clone();
+            lblTime.Font = (Font)initialTimeFont.Clone();
+
+            // リサイズ基準も初期化
+            baseClientSize = initialClientSize;
+            baseTitleFontSize = initialTitleFont.Size;
+            baseTimeFontSize = initialTimeFont.Size;
+
+            UpdateMenuTexts();
+            CenterLabels();
+
+            _isResetting = false;
+        }
+
         private void TransparencyKeyMenuItem_CheckedChanged(object sender, EventArgs e)
         {
+            if (_isResetting) return;
             ApplyTransparencySetting();
         }
 
@@ -460,13 +608,21 @@ namespace ClockApp
 
         private void AlwaysOnTopMenuItem_CheckedChanged(object sender, EventArgs e)
         {
+            if (_isResetting) return;
             this.TopMost = alwaysOnTopMenuItem.Checked;
         }
 
         private void EnableDraggingMenuItem_CheckedChanged(object sender, EventArgs e)
         {
-            draggingEnabled = enableDraggingMenuItem.Checked;
+            if (_isResetting) return;
 
+            draggingEnabled = enableDraggingMenuItem.Checked;
+            ApplyDraggingWindowStyle();
+        }
+
+        // 実際のウインドウスタイルにドラッグ可否を反映
+        private void ApplyDraggingWindowStyle()
+        {
             int currentStyle = GetWindowLong(this.Handle, GWL_EXSTYLE);
             if (!draggingEnabled)
             {
@@ -486,9 +642,20 @@ namespace ClockApp
 
         private void LanguageJaMenuItem_CheckedChanged(object sender, EventArgs e)
         {
+            if (_isResetting) return;
+
             currentCulture = languageJaMenuItem.Checked ? new CultureInfo("ja-JP") : new CultureInfo("en-US");
             UpdateMenuTexts();
-            UpdateTitleWithDateAmPm();
+
+            if (isAutoTitle)
+            {
+                UpdateTitleWithDateAmPm();
+                CenterLabels();
+                AutoSizeToContent();
+                baseClientSize = this.ClientSize;
+                baseTitleFontSize = lblTitle.Font.Size;
+                baseTimeFontSize = lblTime.Font.Size;
+            }
 
             if (currentMode == Mode.Clock) StartClockMode();
             else CenterLabels();
@@ -496,7 +663,7 @@ namespace ClockApp
 
         private void UpdateMenuTexts()
         {
-            bool ja = languageJaMenuItem.Checked;
+            bool ja = languageJaMenuItem != null && languageJaMenuItem.Checked;
 
             languageJaMenuItem.Text = ja ? "日本語表記" : "Japanese labels";
             alwaysOnTopMenuItem.Text = ja ? "常に手前へ表示" : "Always on top";
@@ -510,20 +677,30 @@ namespace ClockApp
             showCurrentTimeMenuItem.Text = ja ? "現在の時刻を表示" : "Show current time";
             setTimerDurationMenuItem.Text = ja ? "タイマーを設定（残り時間指定）" : "Set timer (duration)";
             setTimerTargetTimeMenuItem.Text = ja ? "タイマーを設定（時間を指定して逆算）" : "Set timer (target time)";
+            resetToInitialMenuItem.Text = ja ? "初期設定に戻す" : "Reset to initial";
             exitAppMenuItem.Text = ja ? "アプリの終了" : "Exit";
 
             this.Text = ja ? "時計" : "Clock";
-            trayIcon.Text = ja ? "時計" : "Clock App";
+            if (trayIcon != null)
+                trayIcon.Text = ja ? "時計" : "Clock App";
+        }
+
+        private string BuildAutoTitle()
+        {
+            string date = DateTime.Now.ToString("MM/dd", currentCulture);
+            string amPm = DateTime.Now.ToString("tt", currentCulture);
+            return $"{date}/{amPm}";
         }
 
         private void UpdateTitleWithDateAmPm()
         {
-            string date = DateTime.Now.ToString("MM/dd", currentCulture);
-            string amPm = DateTime.Now.ToString("tt", currentCulture);
-            lblTitle.Text = $"{date}/{amPm}";
+            string autoText = BuildAutoTitle();
+            lastAutoTitle = autoText;
+            lblTitle.Text = autoText;
             CenterLabels();
         }
 
+        // ===== ドラッグ移動 =====
         private void InitializeDragEvents()
         {
             this.lblTime.MouseDown += new MouseEventHandler(this.lblTime_MouseDown);
@@ -558,51 +735,16 @@ namespace ClockApp
             dragging = false;
         }
 
-        // 右下ドラッグでのリサイズ判定
-        protected override void WndProc(ref Message m)
-        {
-            if (m.Msg == WM_NCHITTEST)
-            {
-                // クライアント座標に変換
-                Point p = PointToClient(Cursor.Position);
-                if (p.X >= this.ClientSize.Width - GripSize &&
-                    p.Y >= this.ClientSize.Height - GripSize)
-                {
-                    m.Result = (IntPtr)HTBOTTOMRIGHT;
-                    return;
-                }
-            }
-            base.WndProc(ref m);
-        }
-
-        // フォントをウィンドウ高さに比例させる
-        private void UpdateFontsBySize()
-        {
-            if (baseClientSize.Height <= 0) return;
-            float scale = (float)this.ClientSize.Height / baseClientSize.Height;
-
-            float newTitle = Math.Max(8f, baseTitleFontSize * scale);
-            float newTime = Math.Max(8f, baseTimeFontSize * scale);
-
-            lblTitle.Font = new Font(lblTitle.Font.FontFamily, newTitle, lblTitle.Font.Style, GraphicsUnit.Point);
-            lblTime.Font = new Font(lblTime.Font.FontFamily, newTime, lblTime.Font.Style, GraphicsUnit.Point);
-        }
-
+        // ===== レイアウト =====
         private void CenterLabels()
         {
             lblTitle.Left = (this.ClientSize.Width - lblTitle.Width) / 2;
             lblTime.Left = (this.ClientSize.Width - lblTime.Width) / 2;
             lblTitle.Top = (this.ClientSize.Height - lblTitle.Height - lblTime.Height) / 2;
             lblTime.Top = lblTitle.Top + lblTitle.Height;
-
-            // 自動サイズはユーザリサイズ中は抑止
-            if (!isUserResizing)
-            {
-                AdjustFormSize();
-            }
         }
 
-        private void AdjustFormSize()
+        private void AutoSizeToContent()
         {
             int newWidth = Math.Max(lblTitle.Width, lblTime.Width) + 40;
             int newHeight = lblTitle.Height + lblTime.Height + 40;
@@ -611,8 +753,53 @@ namespace ClockApp
 
         private void Form1_SizeChanged(object sender, EventArgs e)
         {
-            if (isUserResizing) UpdateFontsBySize();
+            ApplyScaleFromWindow();
             CenterLabels();
+        }
+
+        private void ApplyScaleFromWindow()
+        {
+            if (baseClientSize.Width <= 0 || baseClientSize.Height <= 0) return;
+
+            float sx = (float)this.ClientSize.Width / baseClientSize.Width;
+            float sy = (float)this.ClientSize.Height / baseClientSize.Height;
+            float scale = Math.Min(sx, sy);
+            if (scale <= 0f) scale = 0.01f;
+
+            float newTitleSize = baseTitleFontSize * scale;
+            float newTimeSize = baseTimeFontSize * scale;
+
+            if (newTitleSize < 6f) newTitleSize = 6f;
+            if (newTimeSize < 6f) newTimeSize = 6f;
+
+            lblTitle.Font = new Font(lblTitle.Font.FontFamily, newTitleSize, lblTitle.Font.Style);
+            lblTime.Font = new Font(lblTime.Font.FontFamily, newTimeSize, lblTime.Font.Style);
+        }
+
+        // 枠なし右下リサイズ
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == WM_NCHITTEST)
+            {
+                base.WndProc(ref m);
+
+                if ((int)m.Result == 1)
+                {
+                    int l = m.LParam.ToInt32();
+                    int x = (short)(l & 0xFFFF);
+                    int y = (short)((l >> 16) & 0xFFFF);
+                    Point pos = this.PointToClient(new Point(x, y));
+
+                    if (pos.X >= this.ClientSize.Width - RESIZE_GRIP &&
+                        pos.Y >= this.ClientSize.Height - RESIZE_GRIP)
+                    {
+                        m.Result = (IntPtr)HTBOTTOMRIGHT;
+                        return;
+                    }
+                }
+                return;
+            }
+            base.WndProc(ref m);
         }
 
         private void Form1_Load(object sender, EventArgs e) { }
