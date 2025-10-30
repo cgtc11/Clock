@@ -129,6 +129,9 @@ namespace ClockApp
             UpdateMenuTexts();
             ApplyTransparencySetting();
             ApplyDraggingWindowStyle(); // 起動時にも反映
+
+            // 起動直後からチェック通りに前面化
+            this.TopMost = alwaysOnTopMenuItem.Checked;
         }
 
         // ===== 初期フォーム設定 =====
